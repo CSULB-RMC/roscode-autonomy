@@ -4,6 +4,8 @@ from rclpy.node import Node
 from std_msgs.msg import Empty, Int8, Int16MultiArray
 from geometry_msgs.msg import Point
 
+import math
+
 # STATES FOR STATE MACHINE
 # 0: need to calibrate position tracking and determine where to go
 # 1: go to mining zone
@@ -14,11 +16,36 @@ from geometry_msgs.msg import Point
 # 6: deposit regolith
 # 7: stop deposit and get ready to go back to state 1
 
+class LBLState:
+    next_state = 0
+    func = None
+
+    def __init__(self, next_state_init = 0, func_init = None):
+        self.next_state = next_state_init
+        self.func = func_init
+
 class LBLAutonomy(Node):
     state = 0
+    posBuffer = [Point()]
+    rotBuffer = []
+    state_info = None
+
+    finished_moving = False
+    calibrate_in_progress = False
+
+    old_pos = Point()
 
     def __init__(self):
         super().__init__('LBLAutonomy')
+
+        self.state_info = {0: LBLState(1, self.calibrate_state),
+        1: LBLState(2, self.travel_to_mining()),
+        2: LBLState(3, self.start_mining()),
+        3: LBLState(4, self.keep_mining()),
+        4: LBLState(5, self.stop_mining()),
+        5: LBLState(6, self.travel_to_collector()),
+        6: LBLState(7, self.deposit_regolith()),
+        7: LBLState(0, self.stop_depost_regolith()) }
 
         #MOTOR CONTROL
         self.dt_left_pub = self.create_publisher(Int8, 'dt_left', 1)
@@ -41,38 +68,68 @@ class LBLAutonomy(Node):
         self.object_detection_sub
         self.pos_tracking_sub
 
-        while 1==1:
-            if self.state == 0:
-                self.calibrate_state()
-            elif self.state == 1:
-                self.travel_to_mining()
-            elif self.state == 2:
-                self.start_mining()
-            elif self.state == 3:
-                self.keep_mining()
-            elif self.state == 4:
-                self.stop_mining()
-            elif self.state == 5:
-                self.travel_to_collector()
-            elif self.state == 6:
-                self.deposit_regolith()
-            elif self.state == 7:
-                self.stop_depost_regolith()
 
+        #self.stateFunc[0]()
+    def timer_callback(self):
+        self.finished_moving = True
 
     def obstacle_detected_callback(self, msg: Int16MultiArray):
         if self.state == 1:
             pass
         #have to reconstruct tuples from MultiArray
-        pass
+        
     
     def pos_tracking_callback(self, msg: Point):
         #do stuff with the point message
-        pass
+        self.get_logger().info("Pos tracking callback running.\n")
+        self.posBuffer.append(msg)
+        if len(self.posBuffer) > 5:
+            self.posBuffer.pop(0)
+        
+        if self.state == 0 or self.state == 1 or self.state == 5: #if needs to calibrate, 
+            self.state_info[self.state].func(self.finished_moving)
 
-    def calibrate_state(self): # state 0
-        #get position and direction
-        pass
+    def calibrate_state(self, timerCall = False): # state 0
+        if self.calibrate_in_progress == False:
+            self.get_logger().info("Calibration starting.\n")
+            self.calibrate_in_progress = True
+            #calibration has started
+            #get position and direction
+            self.old_pos = self.posBuffer[-1] # latest position
+            
+            # TO BE CHANGED TO MOVE CERTAIN AMOUNT OF METERS VIA ENCODERS
+            speed = Int8()
+            speed.data = 100
+            self.get_logger().info("Moving rover.\n")
+            self.dt_left_pub.publish(speed)
+            self.dt_right_pub.publish(speed)
+            self.create_timer(1, self.timer_callback)
+
+
+            #get angle
+
+            #get position
+            #check if it has regolith (above a threshold), if it does, set state to 5
+            #if not, set state to 1
+        if timerCall:
+            speed = Int8()
+            speed.data = 0
+            self.dt_left_pub.publish(speed)
+            self.dt_right_pub.publish(speed)
+            self.get_logger().info("Stopping rover.\n")
+
+            newPos = self.posBuffer[-1]
+            slope = (newPos.y - self.old_pos.y) / (newPos.x - self.old_pos.x) 
+            new_angle = math.degrees(math.atan(slope))
+            self.get_logger().info("Angle: %d \n" % new_angle)
+            self.rotBuffer.append(new_angle)
+
+            self.state = self.state_info[self.state].next_state
+            self.calibrate_in_progress = False
+
+            #check the new position, then do inverse tangent to get angle
+            
+
     
     def travel_to_mining(self): # state 1
         #travel across to mining zone from starting area
