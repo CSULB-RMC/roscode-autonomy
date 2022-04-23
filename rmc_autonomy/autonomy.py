@@ -68,14 +68,17 @@ class LBLAutonomy(Node):
         self.object_detection_sub
         self.pos_tracking_sub
 
+        self.autonomy_timer = self.create_timer(0.1, self.autonomy_callback)
+
+    def autonomy_callback(self):
+        self.state_info[self.state].func()
 
         #self.stateFunc[0]()
     def timer_callback(self):
         self.finished_moving = True
 
     def obstacle_detected_callback(self, msg: Int16MultiArray):
-        if self.state == 1:
-            pass
+        pass
         #have to reconstruct tuples from MultiArray
         
     
@@ -85,11 +88,8 @@ class LBLAutonomy(Node):
         self.posBuffer.append(msg)
         if len(self.posBuffer) > 5:
             self.posBuffer.pop(0)
-        
-        if self.state == 0 or self.state == 1 or self.state == 5: #if needs to calibrate, 
-            self.state_info[self.state].func(self.finished_moving)
 
-    def calibrate_state(self, timerCall = False): # state 0
+    def calibrate_state(self): # state 0
         if self.calibrate_in_progress == False:
             self.get_logger().info("Calibration starting.\n")
             self.calibrate_in_progress = True
@@ -111,7 +111,7 @@ class LBLAutonomy(Node):
             #get position
             #check if it has regolith (above a threshold), if it does, set state to 5
             #if not, set state to 1
-        if timerCall:
+        if self.finished_moving:
             speed = Int8()
             speed.data = 0
             self.dt_left_pub.publish(speed)
@@ -119,7 +119,10 @@ class LBLAutonomy(Node):
             self.get_logger().info("Stopping rover.\n")
 
             newPos = self.posBuffer[-1]
-            slope = (newPos.y - self.old_pos.y) / (newPos.x - self.old_pos.x) 
+            if newPos.x - self.old_pos.x == 0:
+                slope = 0
+            else:
+                slope = (newPos.y - self.old_pos.y) / (newPos.x - self.old_pos.x) 
             new_angle = math.degrees(math.atan(slope))
             self.get_logger().info("Angle: %d \n" % new_angle)
             self.rotBuffer.append(new_angle)
